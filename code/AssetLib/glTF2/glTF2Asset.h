@@ -561,6 +561,7 @@ struct Accessor : public Object {
     ComponentType componentType; //!< The datatype of components in the attribute. (required)
     size_t count; //!< The number of attributes referenced by this accessor. (required)
     AttribType::Value type; //!< Specifies if the attribute is a scalar, vector, or matrix. (required)
+    bool normalized; //!< Specifies if the componentType is a normalized type
     std::vector<double> max; //!< Maximum value of each component in this attribute.
     std::vector<double> min; //!< Minimum value of each component in this attribute.
     std::unique_ptr<Sparse> sparse;

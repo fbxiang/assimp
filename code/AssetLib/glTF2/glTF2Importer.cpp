@@ -72,10 +72,12 @@ using namespace glTFCommon;
 
 namespace {
 // generate bi-tangents from normals and tangents according to spec
+template <typename T>
 struct Tangent {
-    aiVector3D xyz;
-    ai_real w;
+    aiVector3t<T> xyz;
+    T w;
 };
+
 } // namespace
 
 //
@@ -113,10 +115,10 @@ bool glTF2Importer::CanRead(const std::string &filename, IOSystem *pIOHandler, b
     if (pIOHandler) {
         glTF2::Asset asset(pIOHandler);
         return asset.CanRead(
-            filename,
-            CheckMagicToken(
-                pIOHandler, filename, AI_GLB_MAGIC_NUMBER, 1, 0,
-                static_cast<unsigned int>(strlen(AI_GLB_MAGIC_NUMBER))));
+                filename,
+                CheckMagicToken(
+                        pIOHandler, filename, AI_GLB_MAGIC_NUMBER, 1, 0,
+                        static_cast<unsigned int>(strlen(AI_GLB_MAGIC_NUMBER))));
     }
 
     return false;
@@ -460,6 +462,78 @@ aiColor4D *GetVertexColorsForType(Ref<Accessor> input, std::vector<unsigned int>
     return output;
 }
 
+template <typename T>
+size_t GetVector3DArrayForType(aiVector3D *&output, Ref<Accessor> input, std::vector<unsigned int> *vertexRemappingTable) {
+    float lower = std::numeric_limits<T>::min();
+    float scale = 1.f;
+
+    if (input->normalized) {
+        if constexpr (std::is_same<T, char>::value) {
+            lower = -1.f;
+            scale = 127.f;
+        } else if (std::is_same<T, unsigned char>::value) {
+            lower = 0.f;
+            scale = 255.f;
+        } else if (std::is_same<T, short>::value) {
+            lower = -1.f;
+            scale = 32767.f;
+        } else if (std::is_same<T, unsigned short>::value) {
+            lower = 0.f;
+            scale = 65535.f;
+        }
+    }
+
+    aiVector3t<T> *data;
+    size_t count = input->ExtractData(data, vertexRemappingTable);
+    output = new aiVector3D[input->count];
+    for (size_t i = 0; i < input->count; i++) {
+        output[i] = aiVector3D(
+                std::max(data[i][0] / scale, lower),
+                std::max(data[i][1] / scale, lower),
+                std::max(data[i][2] / scale, lower));
+    }
+    delete[] data;
+    return count;
+}
+
+template <typename T>
+size_t GetTangentArrayForType(Tangent<float> *&output, Ref<Accessor> input, std::vector<unsigned int> *vertexRemappingTable) {
+    float lower = std::numeric_limits<T>::min();
+    float scale = 1.f;
+
+    if (input->normalized) {
+        if constexpr (std::is_same<T, char>::value) {
+            lower = -1.f;
+            scale = 127.f;
+        } else if (std::is_same<T, unsigned char>::value) {
+            lower = 0.f;
+            scale = 255.f;
+        } else if (std::is_same<T, short>::value) {
+            lower = -1.f;
+            scale = 32767.f;
+        } else if (std::is_same<T, unsigned short>::value) {
+            lower = 0.f;
+            scale = 65535.f;
+        }
+    }
+
+    Tangent<T> *data;
+    size_t count = input->ExtractData(data, vertexRemappingTable);
+    output = new Tangent<float>[input->count];
+    for (size_t i = 0; i < input->count; i++) {
+        output[i] = Tangent<float>{
+            .xyz = {
+                    std::max(data[i].xyz[0] / scale, lower),
+                    std::max(data[i].xyz[1] / scale, lower),
+                    std::max(data[i].xyz[2] / scale, lower),
+            },
+            .w = std::max(data[i].w / scale, lower)
+        };
+    }
+    delete[] data;
+    return count;
+}
+
 void glTF2Importer::ImportMeshes(glTF2::Asset &r) {
     ASSIMP_LOG_DEBUG("Importing ", r.meshes.Size(), " meshes");
     std::vector<std::unique_ptr<aiMesh>> meshes;
@@ -498,7 +572,7 @@ void glTF2Importer::ImportMeshes(glTF2::Asset &r) {
             // Extract used vertices:
             bool useIndexBuffer = prim.indices;
             std::vector<unsigned int> *vertexRemappingTable = nullptr;
-            
+
             if (useIndexBuffer) {
                 size_t count = prim.indices->count;
                 indexBuffer.resize(count);
@@ -518,7 +592,7 @@ void glTF2Importer::ImportMeshes(glTF2::Asset &r) {
                     if (index >= numAllVertices) {
                         // Out-of-range indices will be filtered out when adding the faces and then lead to a warning. At this stage, we just keep them.
                         indexBuffer[i] = index;
-                        continue; 
+                        continue;
                     }
                     if (index >= reverseMappingIndices.size()) {
                         reverseMappingIndices.resize(index + 1, unusedIndex);
@@ -561,14 +635,44 @@ void glTF2Importer::ImportMeshes(glTF2::Asset &r) {
             }
 
             if (!attr.position.empty() && attr.position[0]) {
-                aim->mNumVertices = static_cast<unsigned int>(attr.position[0]->ExtractData(aim->mVertices, vertexRemappingTable));
+                switch (attr.position[0]->componentType) {
+                case glTF2::ComponentType_FLOAT:
+                    aim->mNumVertices = static_cast<unsigned int>(attr.position[0]->ExtractData(aim->mVertices, vertexRemappingTable));
+                    break;
+                case glTF2::ComponentType_BYTE:
+                    aim->mNumVertices = GetVector3DArrayForType<char>(aim->mVertices, attr.position[0], vertexRemappingTable);
+                    break;
+                case glTF2::ComponentType_UNSIGNED_BYTE:
+                    aim->mNumVertices = GetVector3DArrayForType<unsigned char>(aim->mVertices, attr.position[0], vertexRemappingTable);
+                    break;
+                case glTF2::ComponentType_SHORT:
+                    aim->mNumVertices = GetVector3DArrayForType<short>(aim->mVertices, attr.position[0], vertexRemappingTable);
+                    break;
+                case glTF2::ComponentType_UNSIGNED_SHORT:
+                    aim->mNumVertices = GetVector3DArrayForType<unsigned short>(aim->mVertices, attr.position[0], vertexRemappingTable);
+                    break;
+                case glTF2::ComponentType_UNSIGNED_INT:
+                    throw DeadlyImportError("Mesh \"", aim->mName.C_Str(), "\" has vertices with unsigned int type.");
+                }
             }
 
             if (!attr.normal.empty() && attr.normal[0]) {
-                    if (attr.normal[0]->count != numAllVertices) {
+                if (attr.normal[0]->count != numAllVertices) {
                     DefaultLogger::get()->warn("Normal count in mesh \"", mesh.name, "\" does not match the vertex count, normals ignored.");
                 } else {
-                    attr.normal[0]->ExtractData(aim->mNormals, vertexRemappingTable);
+                    switch (attr.normal[0]->componentType) {
+                    case glTF2::ComponentType_FLOAT:
+                        attr.normal[0]->ExtractData(aim->mNormals, vertexRemappingTable);
+                        break;
+                    case glTF2::ComponentType_BYTE:
+                        GetVector3DArrayForType<char>(aim->mNormals, attr.normal[0], vertexRemappingTable);
+                        break;
+                    case glTF2::ComponentType_SHORT:
+                        GetVector3DArrayForType<short>(aim->mNormals, attr.normal[0], vertexRemappingTable);
+                        break;
+                    default:
+                        throw DeadlyImportError("Mesh \"", aim->mName.C_Str(), "\" has normals with invalid type.");
+                    }
 
                     // only extract tangents if normals are present
                     if (!attr.tangent.empty() && attr.tangent[0]) {
@@ -576,9 +680,21 @@ void glTF2Importer::ImportMeshes(glTF2::Asset &r) {
                             DefaultLogger::get()->warn("Tangent count in mesh \"", mesh.name, "\" does not match the vertex count, tangents ignored.");
                         } else {
                             // generate bitangents from normals and tangents according to spec
-                            Tangent *tangents = nullptr;
+                            Tangent<float> *tangents = nullptr;
 
-                            attr.tangent[0]->ExtractData(tangents, vertexRemappingTable);
+                            switch (attr.tangent[0]->componentType) {
+                            case glTF2::ComponentType_FLOAT:
+                                attr.tangent[0]->ExtractData(tangents, vertexRemappingTable);
+                                break;
+                            case glTF2::ComponentType_BYTE:
+                                GetTangentArrayForType<char>(tangents, attr.tangent[0], vertexRemappingTable);
+                                break;
+                            case glTF2::ComponentType_SHORT:
+                                GetTangentArrayForType<short>(tangents, attr.tangent[0], vertexRemappingTable);
+                                break;
+                            default:
+                                throw DeadlyImportError("Mesh \"", aim->mName.C_Str(), "\" has tangents with invalid type.");
+                            }
 
                             aim->mTangents = new aiVector3D[aim->mNumVertices];
                             aim->mBitangents = new aiVector3D[aim->mNumVertices];
@@ -624,7 +740,27 @@ void glTF2Importer::ImportMeshes(glTF2::Asset &r) {
                     continue;
                 }
 
-                attr.texcoord[tc]->ExtractData(aim->mTextureCoords[tc], vertexRemappingTable);
+                switch (attr.texcoord[tc]->componentType) {
+                case glTF2::ComponentType_FLOAT:
+                    attr.texcoord[tc]->ExtractData(aim->mTextureCoords[tc], vertexRemappingTable);
+                    break;
+                case glTF2::ComponentType_BYTE:
+                    GetVector3DArrayForType<char>(aim->mTextureCoords[tc], attr.texcoord[tc], vertexRemappingTable);
+                    break;
+                case glTF2::ComponentType_UNSIGNED_BYTE:
+                    GetVector3DArrayForType<unsigned char>(aim->mTextureCoords[tc], attr.texcoord[tc], vertexRemappingTable);
+                    break;
+                case glTF2::ComponentType_SHORT:
+                    GetVector3DArrayForType<short>(aim->mTextureCoords[tc], attr.texcoord[tc], vertexRemappingTable);
+                    break;
+                case glTF2::ComponentType_UNSIGNED_SHORT:
+                    GetVector3DArrayForType<unsigned short>(aim->mTextureCoords[tc], attr.texcoord[tc], vertexRemappingTable);
+                    break;
+                case glTF2::ComponentType_UNSIGNED_INT:
+                    throw DeadlyImportError("Mesh \"", aim->mName.C_Str(), "\" has texcoords with unsigned int type.");
+                }
+
+                // attr.texcoord[tc]->ExtractData(aim->mTextureCoords[tc], vertexRemappingTable);
                 aim->mNumUVComponents[tc] = attr.texcoord[tc]->GetNumComponents();
 
                 aiVector3D *values = aim->mTextureCoords[tc];
@@ -679,11 +815,37 @@ void glTF2Importer::ImportMeshes(glTF2::Asset &r) {
                         } else if (target.tangent[0]->count != numAllVertices) {
                             ASSIMP_LOG_WARN("Tangents of target ", i, " in mesh \"", mesh.name, "\" does not match the vertex count");
                         } else {
-                            Tangent *tangent = nullptr;
-                            attr.tangent[0]->ExtractData(tangent, vertexRemappingTable);
+
+                            Tangent<float> *tangent = nullptr;
+                            switch (attr.tangent[0]->componentType) {
+                            case glTF2::ComponentType_FLOAT:
+                                attr.tangent[0]->ExtractData(tangent, vertexRemappingTable);
+                                break;
+                            case glTF2::ComponentType_BYTE:
+                                GetTangentArrayForType<char>(tangent, attr.tangent[0], vertexRemappingTable);
+                                break;
+                            case glTF2::ComponentType_SHORT:
+                                GetTangentArrayForType<short>(tangent, attr.tangent[0], vertexRemappingTable);
+                                break;
+                            default:
+                                throw DeadlyImportError("Mesh \"", aim->mName.C_Str(), "\" has tangents with invalid type.");
+                            }
 
                             aiVector3D *tangentDiff = nullptr;
-                            target.tangent[0]->ExtractData(tangentDiff, vertexRemappingTable);
+                            switch (attr.tangent[0]->componentType) {
+                            case glTF2::ComponentType_FLOAT:
+                                target.tangent[0]->ExtractData(tangentDiff, vertexRemappingTable);
+                                break;
+                            case glTF2::ComponentType_BYTE:
+                                GetVector3DArrayForType<char>(tangentDiff, target.tangent[0], vertexRemappingTable);
+                                break;
+                            case glTF2::ComponentType_SHORT:
+                                GetVector3DArrayForType<short>(tangentDiff, target.tangent[0], vertexRemappingTable);
+                                break;
+                            default:
+                                throw DeadlyImportError("Mesh \"", aim->mName.C_Str(), "\" has tangents with invalid type.");
+                            }
+
 
                             for (unsigned int vertexId = 0; vertexId < aim->mNumVertices; ++vertexId) {
                                 tangent[vertexId].xyz += tangentDiff[vertexId];
@@ -1016,7 +1178,7 @@ static void GetNodeTransform(aiMatrix4x4 &matrix, const glTF2::Node &node) {
     }
 }
 
-static void BuildVertexWeightMapping(Mesh::Primitive &primitive, std::vector<std::vector<aiVertexWeight>> &map, std::vector<unsigned int>* vertexRemappingTablePtr) {
+static void BuildVertexWeightMapping(Mesh::Primitive &primitive, std::vector<std::vector<aiVertexWeight>> &map, std::vector<unsigned int> *vertexRemappingTablePtr) {
 
     Mesh::Primitive::Attributes &attr = primitive.attributes;
     if (attr.weight.empty() || attr.joint.empty()) {
@@ -1031,7 +1193,7 @@ static void BuildVertexWeightMapping(Mesh::Primitive &primitive, std::vector<std
     struct Weights {
         float values[4];
     };
-    Weights **weights = new Weights*[attr.weight.size()];
+    Weights **weights = new Weights *[attr.weight.size()];
     for (size_t w = 0; w < attr.weight.size(); ++w) {
         num_vertices = attr.weight[w]->ExtractData(weights[w], vertexRemappingTablePtr);
     }
@@ -1045,7 +1207,7 @@ static void BuildVertexWeightMapping(Mesh::Primitive &primitive, std::vector<std
     Indices8 **indices8 = nullptr;
     Indices16 **indices16 = nullptr;
     if (attr.joint[0]->GetElementSize() == 4) {
-        indices8 = new Indices8*[attr.joint.size()];
+        indices8 = new Indices8 *[attr.joint.size()];
         for (size_t j = 0; j < attr.joint.size(); ++j) {
             attr.joint[j]->ExtractData(indices8[j], vertexRemappingTablePtr);
         }
@@ -1077,7 +1239,7 @@ static void BuildVertexWeightMapping(Mesh::Primitive &primitive, std::vector<std
 
     for (size_t w = 0; w < attr.weight.size(); ++w) {
         delete[] weights[w];
-        if(indices8)
+        if (indices8)
             delete[] indices8[w];
         if (indices16)
             delete[] indices16[w];
@@ -1111,7 +1273,7 @@ void ParseExtensions(aiMetadata *metadata, const CustomExtension &extension) {
     }
 }
 
-void ParseExtras(aiMetadata* metadata, const Extras& extras) {
+void ParseExtras(aiMetadata *metadata, const Extras &extras) {
     for (auto const &value : extras.mValues) {
         ParseExtensions(metadata, value);
     }
@@ -1684,9 +1846,9 @@ void glTF2Importer::InternReadFile(const std::string &pFile, aiScene *pScene, IO
     // read the asset file
     glTF2::Asset asset(pIOHandler, static_cast<rapidjson::IRemoteSchemaDocumentProvider *>(mSchemaDocumentProvider));
     asset.Load(pFile,
-               CheckMagicToken(
-                   pIOHandler, pFile, AI_GLB_MAGIC_NUMBER, 1, 0,
-                   static_cast<unsigned int>(strlen(AI_GLB_MAGIC_NUMBER))));
+            CheckMagicToken(
+                    pIOHandler, pFile, AI_GLB_MAGIC_NUMBER, 1, 0,
+                    static_cast<unsigned int>(strlen(AI_GLB_MAGIC_NUMBER))));
     if (asset.scene) {
         pScene->mName = asset.scene->name;
     }
