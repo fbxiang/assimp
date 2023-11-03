@@ -522,12 +522,12 @@ size_t GetTangentArrayForType(Tangent<float> *&output, Ref<Accessor> input, std:
     output = new Tangent<float>[input->count];
     for (size_t i = 0; i < input->count; i++) {
         output[i] = Tangent<float>{
-            .xyz = {
+            {
                     std::max(data[i].xyz[0] / scale, lower),
                     std::max(data[i].xyz[1] / scale, lower),
                     std::max(data[i].xyz[2] / scale, lower),
             },
-            .w = std::max(data[i].w / scale, lower)
+            std::max(data[i].w / scale, lower)
         };
     }
     delete[] data;
@@ -845,7 +845,6 @@ void glTF2Importer::ImportMeshes(glTF2::Asset &r) {
                             default:
                                 throw DeadlyImportError("Mesh \"", aim->mName.C_Str(), "\" has tangents with invalid type.");
                             }
-
 
                             for (unsigned int vertexId = 0; vertexId < aim->mNumVertices; ++vertexId) {
                                 tangent[vertexId].xyz += tangentDiff[vertexId];
